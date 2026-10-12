@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+secrets/
+backups/
+DBbackup/backups/
+monitoring/geoip/
+nginx/logs/
+*.pem
+*.key

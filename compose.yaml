@@ -1,0 +1,665 @@
+
+services:
+
+  # =========================
+  # keycloak
+  # =========================
+
+  keycloak:
+    # image: quay.io/keycloak/keycloak:26.1.4
+    image: quay.io/keycloak/keycloak:26.7.2
+    container_name: keycloak
+    platform: linux/amd64
+    restart: always
+    user: "1000:1000"
+    tmpfs:
+      - /tmp
+      - /opt/keycloak/data/tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 3G
+        reservations:
+          cpus: "0.5"
+          memory: 2G
+    cap_drop:
+      - ALL
+    environment:
+      KC_HOSTNAME: https://auth.imp-active.it/
+      KC_HOSTNAME_ADMIN: https://keycloak-admin.imp-active.it
+      # KC_PROXY: edge
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "true"
+      KC_COOKIE_SAME_SITE: None
+
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-keycloak/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    command: start
+    volumes:
+      - ./themes:/opt/keycloak/themes:ro
+      - ./dist_keycloak/keycloak-theme-for-kc-all-other-versions.jar:/opt/keycloak/providers/keycloak-theme.jar:ro
+    expose:
+      - "8080"
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.5
+
+
+  # =========================
+  # NGINX (NON-ROOT, HARDENED)
+  # =========================
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+
+    # image: nginx:1.30.4-alpine
+    container_name: nginx_proxy
+    restart: always
+    pids_limit: 100
+    mem_limit: 1G
+    cpus: "1.0"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"    # Maximum size of a log file before it gets rotated (e.g., 10MB)
+        max-file: "3"    
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /home/aamshaegar/docker/certbot/challenges:/var/lib/letsencrypt/challenges:ro
+      - /home/aamshaegar/docker/certbot/certs:/etc/nginx/certs:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/logs:/var/log/nginx
+
+      # GeoIP database
+      - /home/aamshaegar/Desktop/app_terzo_settore/app/monitoring/geoip:/etc/nginx/geoip:ro
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.10
+
+
+
+
+  # =========================
+  # RABBITMQ (NON-ROOT, HARDENED)
+  # =========================
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: rabbitmq
+    restart: always
+    user: "1000:1000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    mem_limit: 512M
+    cpus: "1.0"
+    
+    expose:
+      - "5672"
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.6
+
+
+
+  
+  # =========================
+  # FRONTEND (NON-ROOT)
+  # =========================
+  impactive_frontend:
+    # image: ghcr.io/aamshaegar/imp-active_frontend_user:v0.2.22
+    image: ghcr.io/aamshaegar/imp-active_frontend_user:v0.2.37
+    
+    labels:
+      wud.watch: "true"
+      wud.registry: ghcr.io
+      wud.tag.include: ^v\d+\.\d+\.\d+(-.*)?$
+      wud.trigger.update: "true"
+      com.centurylinklabs.watchtower.enable: true
+
+    container_name: impactive_frontend
+    environment:
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST}
+      NEXT_TELEMETRY_DISABLED: 1
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET_USER}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET_USER}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID_USER}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER_USER}
+      NEXTAUTH_URL: ${NEXTAUTH_URL_USER}
+      
+    restart: always
+    user: "1000:1000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+      - /var
+      - /run
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 100
+    mem_limit: 4G
+    cpus: "3.0"
+    expose:
+      - "3000"
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.20
+
+
+
+  # =========================
+  # FRONTEND (NON-ROOT)
+  # =========================
+  impactive_frontend_admin:
+    image: ghcr.io/aamshaegar/imp-active_frontend_admin:0.0.7
+
+    labels:
+      wud.watch: "true"
+      wud.registry: ghcr.io
+      wud.tag.include: ^v\d+\.\d+\.\d+$$
+      wud.trigger.update: "true"
+      com.centurylinklabs.watchtower.enable: true
+
+    container_name: impactive_frontend_admin
+    environment:
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST}
+      NEXT_TELEMETRY_DISABLED: 1
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+
+    restart: always
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 100
+    mem_limit: 1G
+    cpus: "1.0"
+    expose:
+      - "3000"
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.21
+
+
+
+
+
+
+  # =========================
+  # BACKEND (NON-ROOT, HARDENED)
+  # =========================
+  impactive_backend:
+    image: ghcr.io/aamshaegar/imp-active_backend_user:v0.0.7
+    labels:
+      wud.watch: "true"
+      wud.registry: ghcr.io
+      wud.tag.include: ^v\d+\.\d+\.\d+$$
+      wud.trigger.update: "true"
+      com.centurylinklabs.watchtower.enable: true
+      
+    container_name: impactive_backend
+    restart: always
+    user: "1000:1000"
+
+    environment:
+      SERVER_PORT: "8082"
+      FRONT_END_HOST: ${FRONT_END_HOST}
+
+      MONGO_HOST: ${MONGO_HOST}
+      MONGO_PORT: ${MONGO_PORT}
+      MONGO_USER: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_PASS: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_DB: ${MONGO_INITDB_DATABASE}
+
+      # Keycloak
+      KEYCLOAK_URL: ${KEYCLOAK_URL}
+      KEYCLOAK_USERS_REALM: ${KEYCLOAK_USERS_REALM}
+      KEYCLOAK_USERS_CLIENT_ID: ${KEYCLOAK_USERS_CLIENT_ID}
+      KEYCLOAK_USERS_SECRET: ${KEYCLOAK_USERS_SECRET}
+      KEYCLOAK_ADMIN_ISSUER: ${KEYCLOAK_ADMIN_ISSUER_BACKEND_USER}
+
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+      QUESTIONNAIRE_QUEUE: ${QUESTIONNAIRE_QUEUE}
+
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    expose:
+      - "8080"
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.30
+
+
+
+
+
+  # =========================
+  # BACKEND ADMIN
+  # =========================
+  impactive_backend_admin:
+    # image: ghcr.io/imp-active-team/imp-active_backend_admin:v0.0.5
+    image: ghcr.io/aamshaegar/imp-active_backend_admin:v0.0.7
+    container_name: impactive_backend_admin
+    restart: always
+    user: "1000:1000"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    expose:
+      - "8082"
+
+    environment:
+      SERVER_PORT: "8082"
+      FRONT_END_HOST: ${FRONT_END_ADMIN_HOST}
+
+      MONGO_HOST: mongodb_admin_service
+      MONGO_PORT: "27017"
+      MONGO_USER: ${MONGO_ADMIN_USER}
+      MONGO_PASS: ${MONGO_ADMIN_PASSWORD}
+      MONGO_DB: ${MONGO_DB_ADMIN}
+
+      # Keycloak
+      KEYCLOAK_URL: ${KEYCLOAK_URL}
+      KEYCLOAK_ADMIN_REALM: ${KEYCLOAK_ADMIN_REALM}
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID}
+      KEYCLOAK_ADMIN_SECRET: ${KEYCLOAK_ADMIN_SECRET}
+      KEYCLOAK_USERS_REALM: ${KEYCLOAK_USERS_REALM}
+      KEYCLOAK_USERS_CLIENT_ID: ${KEYCLOAK_USERS_CLIENT_ID}
+      KEYCLOAK_USERS_SECRET: ${KEYCLOAK_USERS_SECRET}
+      KEYCLOAK_ADMIN_ISSUER: ${KEYCLOAK_ADMIN_ISSUER}
+
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+      QUESTIONNAIRE_QUEUE: ${QUESTIONNAIRE_QUEUE}
+
+    depends_on:
+      - mongodb_admin_service
+
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.31
+
+
+
+  # =========================
+  # postgres KEYCLOAK
+  # =========================
+  postgres-keycloak:
+    image: postgres:17.11
+    container_name: postgres-keycloak
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 2G
+        reservations:
+          cpus: "0.2"
+          memory: 512M
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./services/postgres/local_data:/var/lib/postgresql/data
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.10.40
+
+
+
+
+  # =========================
+  # MongoDB USER (SECURE)
+  # =========================
+  mongodb_service:
+    image: mongo:7.0.40-jammy
+    container_name: mongodb_service
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    pids_limit: 100
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
+
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.50
+    volumes:
+      - mongo_data:/data/db:rw
+      - /tmp/mongo_backups:/tmp/mongo_backups:rw  # Mount host backup directory
+    ports:
+      - "10.50.0.1:27018:27017"
+
+
+
+  # =========================
+  # MongoDB admin
+  # =========================
+  mongodb_admin_service:
+    image: mongo:7.0.40-jammy
+    container_name: mongodb_admin_service
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    pids_limit: 100
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ADMIN_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ADMIN_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB_ADMIN}
+
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.51
+
+    volumes:
+      - mongo_admin_data:/data/db:rw
+    # ports:
+    #   - 27017:27017
+    ports:
+      - "10.50.0.1:27017:27017"
+      # - "10.50.0.1:27017:27017"
+    # expose:
+    #   - "27017"
+
+
+
+
+# --------------------------------------------------------------------------------
+# MONITORING ---------------------------------------------------------------------
+# --------------------------------------------------------------------------------
+
+  # =========================
+  # DATABASE BACKUP
+  # =========================
+  # MANUAL CHECK
+  # docker exec -it database_backup /usr/local/bin/backup.sh
+  # docker exec database_backup date
+
+  database_backup:
+    build:
+      context: ./DBbackup/backup
+      dockerfile: Dockerfile
+
+    container_name: database_backup
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 50
+    mem_limit: 512M
+    cpus: "0.5"
+
+    environment:
+      CRON_SCHEDULE: "0 2 * * *" # DATETIME = UTC  (actual date - 2)
+      # docker exec database_backup date
+
+      # KEYCLAOK PSOTGRES
+      POSTGRES_HOST: postgres-keycloak
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # ADMIN MONGO DB
+      MONGO1_HOST: mongodb_admin_service
+      MONGO1_PORT: "27017"
+      MONGO1_DB: ${MONGO_DB}
+      MONGO1_USER: ${MONGO_ADMIN_USER}
+      MONGO1_PASSWORD: ${MONGO_ADMIN_PASSWORD}
+
+      # USER MONGO DB
+      MONGO2_HOST: mongodb_service
+      MONGO2_PORT: "27017"
+      MONGO2_DB: ${MONGO_INITDB_DATABASE}
+      MONGO2_USER: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO2_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+
+      # BACKUP ENV
+      BACKUP_ROOT: /backups
+      RETENTION_DAILY: "7"
+      RETENTION_WEEKLY: "4"
+      RETENTION_MONTHLY: "12"
+
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY}
+      
+      R2_ENABLED: "true"
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      R2_BUCKET: ${R2_BUCKET}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+
+    volumes:
+      - ./DBbackup/backups:/backups:rw
+    networks:
+      impactive_net:
+
+
+
+  # =========================
+  # LOKI - NGINX LOG STORAGE
+  # =========================
+  loki:
+    image: grafana/loki:3.7.0
+    container_name: loki
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/config.yaml
+
+    mem_limit: 768M
+    cpus: "0.5"
+    pids_limit: 100
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./monitoring/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki:rw
+
+    expose:
+      - "3100"
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.60
+
+
+
+
+  # =========================
+  # ALLOY - NGINX LOG COLLECTOR
+  # =========================
+
+  alloy:
+    image: grafana/alloy:v1.19.0
+    container_name: alloy
+    restart: unless-stopped
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/tmp/alloy-data
+      - --server.http.listen-addr=0.0.0.0:12345
+
+    mem_limit: 256M
+    cpus: "0.25"
+    pids_limit: 100
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # NGINX logs - READ ONLY
+      - ./nginx/logs:/var/log/nginx:ro
+
+      # Alloy configuration - READ ONLY
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+
+      # GeoIP database - READ ONLY
+      - ./monitoring/geoip:/etc/geoip:ro
+    depends_on:
+      - loki
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.61
+
+
+
+  # =========================
+  # GRAFANA - VPN ONLY
+  # =========================
+  grafana:
+    image: grafana/grafana:12.2.0
+    container_name: grafana
+    restart: unless-stopped
+    mem_limit: 512M
+    cpus: "0.5"
+    pids_limit: 100
+    user: "472:472"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run
+      - /var/lib/grafana/plugins
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GF_SERVER_HTTP_ADDR: "0.0.0.0"
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_LOG_MODE: "console"
+    volumes:
+      - grafana_data:/var/lib/grafana:rw
+      # Automatically configure Loki datasource
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
+    ports:
+      # VPN/private interface ONLY
+      - "10.50.0.1:3000:3000"
+    networks:
+      impactive_net:
+        ipv4_address: 172.20.0.62
+
+
+
+  
+volumes:
+  mongo_admin_data:
+  mongo_data:
+  rabbitmq_data:
+  mysql_data:
+  mongo_admin_data_dev:
+  grafana_data:
+  loki_data:  # Monitoring
+
+
+
+
+# =========================
+# NETWORK (ISOLATED BRIDGE)
+# =========================
+networks:
+  impactive_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "172.20.0.0/16"
+          gateway: "172.20.0.1"

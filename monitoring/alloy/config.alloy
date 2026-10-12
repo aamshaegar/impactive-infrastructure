@@ -1,0 +1,64 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+loki.source.file "nginx" {
+  targets = [
+    {
+      __path__ = "/var/log/nginx/*.log",
+      job      = "nginx",
+      service  = "nginx",
+    },
+  ]
+
+  file_match {
+    enabled = true
+  }
+
+  forward_to = [
+    loki.process.nginx.receiver,
+  ]
+}
+
+loki.process "nginx" {
+
+  stage.regex {
+    expression = "^(?P<client_ip>\\d{1,3}(?:\\.\\d{1,3}){3})\\s"
+  }
+
+  stage.geoip {
+    source  = "client_ip"
+    db      = "/etc/geoip/GeoLite2-City.mmdb"
+    db_type = "city"
+  }
+
+  stage.labels {
+    values = {
+      client_ip                = "",
+      geoip_city_name          = "",
+      geoip_country_name       = "",
+      geoip_country_code       = "",
+      geoip_continent_name     = "",
+      geoip_continent_code     = "",
+      geoip_location_latitude  = "",
+      geoip_location_longitude = "",
+      geoip_postal_code        = "",
+      geoip_timezone           = "",
+      geoip_subdivision_name   = "",
+      geoip_subdivision_code   = "",
+    }
+  }
+
+
+  forward_to = [
+    loki.write.local.receiver,
+  ]
+}
+
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
